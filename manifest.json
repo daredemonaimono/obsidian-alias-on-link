@@ -1,7 +1,7 @@
 {
   "id": "alias-on-link",
   "name": "Alias on Link",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "minAppVersion": "1.4.0",
   "description": "When you write [[Note|alias]], the alias is added to the linked note's frontmatter aliases automatically.",
   "author": "daredemonaimono",
