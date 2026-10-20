@@ -1,4 +1,4 @@
-import { CachedMetadata, Plugin, TFile, getLinkpath } from "obsidian";
+import { MarkdownView, Plugin, TFile, getLinkpath } from "obsidian";
 
 const DEBOUNCE_MS = 2000;
 
@@ -26,8 +26,8 @@ export default class AliasOnLinkPlugin extends Plugin {
 
 	async onload() {
 		this.registerEvent(
-			this.app.metadataCache.on("changed", (file, _data, cache) => {
-				this.schedule(file, cache);
+			this.app.metadataCache.on("changed", (file) => {
+				this.schedule(file);
 			})
 		);
 	}
@@ -37,21 +37,35 @@ export default class AliasOnLinkPlugin extends Plugin {
 		this.timers.clear();
 	}
 
-	private schedule(file: TFile, cache: CachedMetadata) {
+	private schedule(file: TFile) {
 		const prev = this.timers.get(file.path);
 		if (prev !== undefined) window.clearTimeout(prev);
 		const t = window.setTimeout(() => {
 			this.timers.delete(file.path);
-			void this.processLinks(file, cache);
+			void this.processLinks(file);
 		}, DEBOUNCE_MS);
 		this.timers.set(file.path, t);
 	}
 
-	private async processLinks(file: TFile, cache: CachedMetadata) {
-		const links = cache.links ?? [];
+	/** True while the cursor is inside the link, i.e. the alias is probably still being typed. */
+	private isEditingLink(file: TFile, start: number, end: number): boolean {
+		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+		if (!view || view.file?.path !== file.path) return false;
+		const offset = view.editor.posToOffset(view.editor.getCursor());
+		return offset > start && offset < end;
+	}
+
+	private async processLinks(file: TFile) {
+		const cache = this.app.metadataCache.getFileCache(file);
+		const links = cache?.links ?? [];
+		let pending = false;
 		for (const link of links) {
 			const alias = parseAlias(link.original);
 			if (!alias) continue;
+			if (this.isEditingLink(file, link.position.start.offset, link.position.end.offset)) {
+				pending = true;
+				continue;
+			}
 			const target = this.app.metadataCache.getFirstLinkpathDest(getLinkpath(link.link), file.path);
 			if (!target || target.extension !== "md" || target.path === file.path) continue;
 			if (alias === target.basename) continue;
@@ -64,5 +78,6 @@ export default class AliasOnLinkPlugin extends Plugin {
 				console.error("[alias-on-link] failed to update", target.path, e);
 			}
 		}
+		if (pending) this.schedule(file);
 	}
 }
