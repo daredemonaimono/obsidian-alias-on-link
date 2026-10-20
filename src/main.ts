@@ -1,6 +1,7 @@
 import { MarkdownView, Plugin, TFile, getLinkpath } from "obsidian";
 
 const DEBOUNCE_MS = 3000;
+const CREATE_DELAY_MS = 1500;
 
 /** Pure helper: merge a new alias into a frontmatter `aliases` value. Returns null if no change is needed. */
 export function mergeAlias(current: unknown, alias: string): string[] | null {
@@ -42,6 +43,24 @@ export default class AliasOnLinkPlugin extends Plugin {
 			if (info.file) this.schedule(info.file);
 		}));
 		this.registerEvent(this.app.metadataCache.on("changed", (file) => this.schedule(file)));
+
+		// A note created later (e.g. by clicking an unresolved link) should get the aliases of links already pointing at it.
+		// Registered after layout is ready so the startup flood of "create" events is ignored.
+		this.app.workspace.onLayoutReady(() => {
+			this.registerEvent(this.app.vault.on("create", (f) => {
+				if (!(f instanceof TFile) || f.extension !== "md") return;
+				window.setTimeout(() => void this.processBacklinks(f), CREATE_DELAY_MS);
+			}));
+		});
+	}
+
+	private async processBacklinks(created: TFile) {
+		const resolved = this.app.metadataCache.resolvedLinks;
+		for (const source of Object.keys(resolved)) {
+			if (!resolved[source][created.path]) continue;
+			const file = this.app.vault.getAbstractFileByPath(source);
+			if (file instanceof TFile) await this.processLinks(file);
+		}
 	}
 
 	onunload() {
