@@ -1,4 +1,4 @@
-import { MarkdownView, Plugin, TFile, getLinkpath } from "obsidian";
+import { App, MarkdownView, Plugin, PluginSettingTab, Setting, TFile, getLinkpath } from "obsidian";
 
 const DEBOUNCE_MS = 3000;
 const CREATE_DELAY_MS = 1500;
@@ -35,10 +35,19 @@ export function findAliasLinks(text: string): AliasLink[] {
 	return result;
 }
 
+interface AliasOnLinkSettings {
+	addToNewNotes: boolean;
+}
+
+const DEFAULT_SETTINGS: AliasOnLinkSettings = { addToNewNotes: true };
+
 export default class AliasOnLinkPlugin extends Plugin {
+	settings: AliasOnLinkSettings = DEFAULT_SETTINGS;
 	private timers = new Map<string, number>();
 
 	async onload() {
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		this.addSettingTab(new AliasOnLinkSettingTab(this.app, this));
 		this.registerEvent(this.app.workspace.on("editor-change", (_editor, info) => {
 			if (info.file) this.schedule(info.file);
 		}));
@@ -49,9 +58,25 @@ export default class AliasOnLinkPlugin extends Plugin {
 		this.app.workspace.onLayoutReady(() => {
 			this.registerEvent(this.app.vault.on("create", (f) => {
 				if (!(f instanceof TFile) || f.extension !== "md") return;
-				window.setTimeout(() => void this.processBacklinks(f), CREATE_DELAY_MS);
+				window.setTimeout(() => {
+					void this.addEmptyAliases(f);
+					void this.processBacklinks(f);
+				}, CREATE_DELAY_MS);
 			}));
 		});
+	}
+
+	/** Give a brand-new, still-empty note an empty `aliases` property. Notes with any content (templates, synced files) are left alone. */
+	private async addEmptyAliases(file: TFile) {
+		if (!this.settings.addToNewNotes) return;
+		try {
+			if ((await this.app.vault.read(file)).trim() !== "") return;
+			await this.app.fileManager.processFrontMatter(file, (fm) => {
+				if (fm.aliases === undefined) fm.aliases = [];
+			});
+		} catch (e) {
+			console.error("[alias-on-link] failed to add aliases to", file.path, e);
+		}
 	}
 
 	private async processBacklinks(created: TFile) {
@@ -104,5 +129,25 @@ export default class AliasOnLinkPlugin extends Plugin {
 			}
 		}
 		if (pending) this.schedule(file);
+	}
+}
+
+class AliasOnLinkSettingTab extends PluginSettingTab {
+	constructor(app: App, private plugin: AliasOnLinkPlugin) {
+		super(app, plugin);
+	}
+
+	display() {
+		const { containerEl } = this;
+		containerEl.empty();
+		new Setting(containerEl)
+			.setName("Add empty aliases to new notes")
+			.setDesc("When a new empty note is created, add an empty aliases property to it. Notes created with content (e.g. from a template) are not touched.")
+			.addToggle((t) =>
+				t.setValue(this.plugin.settings.addToNewNotes).onChange(async (v) => {
+					this.plugin.settings.addToNewNotes = v;
+					await this.plugin.saveData(this.plugin.settings);
+				})
+			);
 	}
 }
