@@ -2,12 +2,13 @@ import { App, MarkdownView, Plugin, PluginSettingTab, Setting, TFile, getLinkpat
 
 const DEBOUNCE_MS = 3000;
 const CREATE_DELAY_MS = 1500;
+const NEW_NOTE_TEMPLATE = "---\naliases:\n  - \n---\n";
 
 /** Pure helper: merge a new alias into a frontmatter `aliases` value. Returns null if no change is needed. */
 export function mergeAlias(current: unknown, alias: string): string[] | null {
 	let list: string[];
 	if (current == null) list = [];
-	else if (Array.isArray(current)) list = current.map((v) => String(v));
+	else if (Array.isArray(current)) list = current.filter((v) => v != null && String(v).trim() !== "").map((v) => String(v));
 	else if (typeof current === "string") list = current.trim() === "" ? [] : [current];
 	else return null;
 	if (list.includes(alias)) return null;
@@ -70,10 +71,7 @@ export default class AliasOnLinkPlugin extends Plugin {
 	private async addEmptyAliases(file: TFile) {
 		if (!this.settings.addToNewNotes) return;
 		try {
-			if ((await this.app.vault.read(file)).trim() !== "") return;
-			await this.app.fileManager.processFrontMatter(file, (fm) => {
-				if (fm.aliases === undefined) fm.aliases = [];
-			});
+			await this.app.vault.process(file, (data) => (data.trim() === "" ? NEW_NOTE_TEMPLATE : data));
 		} catch (e) {
 			console.error("[alias-on-link] failed to add aliases to", file.path, e);
 		}
@@ -142,7 +140,7 @@ class AliasOnLinkSettingTab extends PluginSettingTab {
 		containerEl.empty();
 		new Setting(containerEl)
 			.setName("Add empty aliases to new notes")
-			.setDesc("When a new empty note is created, add an empty aliases property to it. Notes created with content (e.g. from a template) are not touched.")
+			.setDesc("When a new empty note is created, add an aliases property with one empty list item. Notes created with content (e.g. from a template) are not touched.")
 			.addToggle((t) =>
 				t.setValue(this.plugin.settings.addToNewNotes).onChange(async (v) => {
 					this.plugin.settings.addToNewNotes = v;
