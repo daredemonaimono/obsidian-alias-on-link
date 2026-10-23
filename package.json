@@ -1,6 +1,6 @@
 {
   "name": "obsidian-alias-on-link",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Obsidian plugin: add [[Note|alias]] aliases to the linked note's frontmatter automatically.",
   "main": "main.js",
   "scripts": {

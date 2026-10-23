@@ -1,4 +1,4 @@
-import { App, MarkdownView, Plugin, PluginSettingTab, Setting, TFile, getLinkpath } from "obsidian";
+import { App, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, getLinkpath } from "obsidian";
 
 const DEBOUNCE_MS = 3000;
 const CREATE_DELAY_MS = 1500;
@@ -13,6 +13,16 @@ export function mergeAlias(current: unknown, alias: string): string[] | null {
 	else return null;
 	if (list.includes(alias)) return null;
 	return [...list, alias];
+}
+
+/** Pure helper: split "a, b，c、d" into trimmed, non-empty, de-duplicated aliases. */
+export function splitAliases(input: string): string[] {
+	const out: string[] = [];
+	for (const part of input.split(/[,，、]/)) {
+		const a = part.trim();
+		if (a !== "" && !out.includes(a)) out.push(a);
+	}
+	return out;
 }
 
 export interface AliasLink {
@@ -49,6 +59,22 @@ export default class AliasOnLinkPlugin extends Plugin {
 	async onload() {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
 		this.addSettingTab(new AliasOnLinkSettingTab(this.app, this));
+
+		this.addCommand({
+			id: "add-alias",
+			name: "Add alias",
+			checkCallback: (checking) => {
+				const file = this.app.workspace.getActiveFile();
+				if (!file || file.extension !== "md") return false;
+				if (!checking) this.promptAliases(file);
+				return true;
+			},
+		});
+		this.registerEvent(this.app.workspace.on("editor-menu", (menu, _editor, view) => {
+			const file = view.file;
+			if (!file || file.extension !== "md") return;
+			menu.addItem((item) => item.setTitle("Add alias").setIcon("tag").onClick(() => this.promptAliases(file)));
+		}));
 		this.registerEvent(this.app.workspace.on("editor-change", (_editor, info) => {
 			if (info.file) this.schedule(info.file);
 		}));
@@ -65,6 +91,32 @@ export default class AliasOnLinkPlugin extends Plugin {
 				}, CREATE_DELAY_MS);
 			}));
 		});
+	}
+
+	private promptAliases(file: TFile) {
+		new AddAliasModal(this.app, (input) => void this.addAliases(file, splitAliases(input))).open();
+	}
+
+	private async addAliases(file: TFile, aliases: string[]) {
+		if (aliases.length === 0) return;
+		let added = 0;
+		try {
+			await this.app.fileManager.processFrontMatter(file, (fm) => {
+				let current: unknown = fm.aliases;
+				for (const alias of aliases) {
+					const merged = mergeAlias(current, alias);
+					if (merged) {
+						current = merged;
+						added++;
+					}
+				}
+				if (added > 0) fm.aliases = current;
+			});
+			new Notice(added > 0 ? `Added ${added} alias${added > 1 ? "es" : ""}` : "Those aliases already exist");
+		} catch (e) {
+			console.error("[alias-on-link] failed to add aliases to", file.path, e);
+			new Notice("Failed to add aliases");
+		}
 	}
 
 	/** Give a brand-new, still-empty note an empty `aliases` property. Notes with any content (templates, synced files) are left alone. */
@@ -147,5 +199,37 @@ class AliasOnLinkSettingTab extends PluginSettingTab {
 					await this.plugin.saveData(this.plugin.settings);
 				})
 			);
+	}
+}
+
+class AddAliasModal extends Modal {
+	constructor(app: App, private onSubmit: (input: string) => void) {
+		super(app);
+	}
+
+	onOpen() {
+		this.setTitle("Add alias");
+		const input = this.contentEl.createEl("input", {
+			type: "text",
+			placeholder: "alias1, alias2, alias3",
+		});
+		input.style.width = "100%";
+		const submit = () => {
+			const value = input.value;
+			this.close();
+			this.onSubmit(value);
+		};
+		input.addEventListener("keydown", (e) => {
+			if (e.key === "Enter" && !e.isComposing) {
+				e.preventDefault();
+				submit();
+			}
+		});
+		new Setting(this.contentEl).addButton((b) => b.setButtonText("Add").setCta().onClick(submit));
+		input.focus();
+	}
+
+	onClose() {
+		this.contentEl.empty();
 	}
 }
